@@ -1,14 +1,13 @@
 use crate::math::{BitMatrix, BitVector};
 use crate::utf8::UnicodeCodepoint;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::AtomicUsize;
 
 static GRAPH_ID: AtomicUsize = AtomicUsize::new(0);
 
 #[derive(Debug)]
 pub struct Graph {
     nodes: Vec<Node>,
-    id: usize,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -18,25 +17,16 @@ struct Node {
     epsilon_edges: Vec<usize>,
 }
 
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub struct NodeRef {
-    graph_id: usize,
+#[derive(Copy, Clone)]
+pub struct NodeRef<'a> {
+    graph: &'a Graph,
     index: usize,
 }
-
-impl PartialEq for Graph {
-    fn eq(&self, other: &Self) -> bool {
-        self.id == other.id
-    }
-}
-
-impl Eq for Graph {}
 
 impl Clone for Graph {
     fn clone(&self) -> Self {
         Graph {
             nodes: self.nodes.clone(),
-            id: GRAPH_ID.fetch_add(1, Ordering::Relaxed),
         }
     }
 }
@@ -45,12 +35,11 @@ impl Graph {
     pub fn new() -> Graph {
         Graph {
             nodes: vec![Node::default()],
-            id: GRAPH_ID.fetch_add(1, Ordering::Relaxed),
         }
     }
 
     fn owns_node(&self, x: NodeRef) -> bool {
-        self.id == x.graph_id
+        std::ptr::eq(self, x.graph)
     }
 
     fn get_node(&self, x: NodeRef) -> &Node {
@@ -63,19 +52,17 @@ impl Graph {
         &mut self.nodes[x.index]
     }
 
+    fn node_with_index(&self, index: usize) -> NodeRef {
+        NodeRef { graph: self, index }
+    }
+
     pub fn get_initial_node(&self) -> NodeRef {
-        NodeRef {
-            graph_id: self.id,
-            index: 0,
-        }
+        self.node_with_index(0)
     }
 
     pub fn add_node(&mut self) -> NodeRef {
         self.nodes.push(Node::default());
-        NodeRef {
-            graph_id: self.id,
-            index: self.nodes.len() - 1,
-        }
+        self.node_with_index(self.nodes.len() - 1)
     }
 
     /// Panics if `x` or `y` doesn't belong to `self`
@@ -92,10 +79,10 @@ impl Graph {
 
     /// Panics if `x` doesn't belong to `self`
     pub fn get_connections(&self, x: NodeRef) -> impl Iterator<Item = NodeRef> {
-        self.get_node(x).edges.iter().map(|(e, _)| NodeRef {
-            graph_id: self.id,
-            index: *e,
-        })
+        self.get_node(x)
+            .edges
+            .iter()
+            .map(|(e, _)| self.node_with_index(*e))
     }
 
     /// Panics if `x` doesn't belong to `self`
@@ -103,10 +90,10 @@ impl Graph {
         &self,
         x: NodeRef,
     ) -> impl Iterator<Item = NodeRef> {
-        self.get_node(x).epsilon_edges.iter().map(|e| NodeRef {
-            graph_id: self.id,
-            index: *e,
-        })
+        self.get_node(x)
+            .epsilon_edges
+            .iter()
+            .map(|e| self.node_with_index(*e))
     }
 
     /// Panics if `x` doesn't belong to `self`
@@ -163,7 +150,7 @@ impl Graph {
 
     pub fn debug_string(&self) -> String {
         let mut s = String::new();
-        for (a_node, a) in self.nodes.iter().zip(0_usize..) {
+        for (a, a_node) in self.nodes.iter().enumerate() {
             for (b, token) in &a_node.edges {
                 s.push_str(&format!("{} {} {}\n", a, b, char::from(*token)));
             }
